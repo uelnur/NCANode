@@ -68,6 +68,13 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
 
             // Получаем сертификат
             X509Certificate cert = (X509Certificate) p12.getCertificate(alias);
+
+            try {
+                cert.checkValidity();
+            } catch (CertificateExpiredException|CertificateNotYetValidException e) {
+                throw new ApiErrorException(e.getMessage(), HttpURLConnection.HTTP_BAD_REQUEST, ApiStatus.STATUS_CERTIFICATE_INVALID);
+            }
+
             certificates.add(cert);
 
             Signature sig = Signature.getInstance(cert.getSigAlgName(), kalkan.get());
@@ -102,11 +109,10 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
             for (SignerInformation signer : (Collection<SignerInformation>) signerStore.getSigners()) {
                 X509Certificate cert = certificates.get(i++);
 
-                if (!getApiServiceProvider().tsp.signerHasTsp(signer)) {
-                    // пропускаем добавление tsp к подписи, если эта подпись уже была во входящем файле
+                try {
                     signers.add(getApiServiceProvider().tsp.addTspToSigner(signer, cert, useTsaPolicy));
-                } else {
-                    signers.add(signer);
+                } catch (IOException e) {
+                    throw new ApiErrorException("Не удалось добавить метку TSP: " + e.getMessage());
                 }
             }
 
@@ -163,20 +169,6 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
             Collection certCollection = clientCerts.getCertificates(signerConstraints);
             Iterator certIt = certCollection.iterator();
 
-            Vector<Attribute> tspAttrs = getApiServiceProvider().tsp.getSignerTspAttributes(signer);
-            Date tspDate = null;
-
-            for (Attribute attr : tspAttrs) {
-                if (attr.getAttrValues().size() != 1) {
-                    throw new Exception("Too many TSP tokens");
-                }
-
-                CMSSignedData tspCms = new CMSSignedData(attr.getAttrValues().getObjectAt(0).getDERObject().getEncoded());
-                TimeStampTokenInfo tspi = getApiServiceProvider().tsp.verifyTSP(tspCms);
-
-                tspDate = tspi.getGenTime();
-            }
-
             boolean certCheck = false;
             List<String> certSerialNumbers = new ArrayList<>();
 
@@ -185,19 +177,11 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
                 X509Certificate cert = (X509Certificate) certIt.next();
 
                 try {
-                    if (tspDate != null) {
-                        cert.checkValidity(tspDate);
-                    } else {
-                        cert.checkValidity();
-                    }
-
-                    // TODO: ключ valid нужно добавлять рядом с информацией о сертификате, но пока не знаю как
-                    resp.put("valid", "valid");
-                } catch (CertificateExpiredException e) {
-                    resp.put("valid", "certificate_expired");
-                } catch (CertificateNotYetValidException e) {
-                    resp.put("valid", "certificate_not_yet_valid");
+                    cert.checkValidity();
+                } catch (CertificateExpiredException|CertificateNotYetValidException e) {
+                    throw new ApiErrorException(e.getMessage(), HttpURLConnection.HTTP_BAD_REQUEST, ApiStatus.STATUS_CERTIFICATE_INVALID);
                 }
+
                 certs.add(cert);
                 certsSignValid.add(signer.verify(cert.getPublicKey(), providerName));
                 certSerialNumbers.add(String.valueOf(cert.getSerialNumber()));
@@ -206,13 +190,13 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
             if (!certCheck) {
                 throw new ApiErrorException(
                         "Certificate not found. The document signature is probably invalid.",
-                        HttpURLConnection.HTTP_BAD_REQUEST
+                        HttpURLConnection.HTTP_BAD_REQUEST,
+                        ApiStatus.STATUS_CERTIFICATE_INVALID
                 );
             }
 
             // Tsp verification
-            //Vector<Attribute>
-            tspAttrs = getApiServiceProvider().tsp.getSignerTspAttributes(signer);
+            Vector<Attribute> tspAttrs = getApiServiceProvider().tsp.getSignerTspAttributes(signer);
 
             for (Attribute attr : tspAttrs) {
                 if (attr.getAttrValues().size() != 1) {
@@ -269,7 +253,8 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
             if (issuerCert == null) {
                 throw new ApiErrorException(
                         "Cannot find certificate issuer. The document signature is probably invalid.",
-                        HttpURLConnection.HTTP_BAD_REQUEST
+                        HttpURLConnection.HTTP_BAD_REQUEST,
+                        ApiStatus.STATUS_CERTIFICATE_INVALID
                 );
             }
 
@@ -288,7 +273,8 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
         if (!signInfo) {
             throw new ApiErrorException(
                     "Signer information not found. The document signature is probably invalid.",
-                    HttpURLConnection.HTTP_BAD_REQUEST
+                    HttpURLConnection.HTTP_BAD_REQUEST,
+                    ApiStatus.STATUS_CERTIFICATE_INVALID
             );
         }
 
