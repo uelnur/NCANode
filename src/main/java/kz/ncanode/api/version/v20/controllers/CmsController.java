@@ -163,13 +163,41 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
             Collection certCollection = clientCerts.getCertificates(signerConstraints);
             Iterator certIt = certCollection.iterator();
 
+            Vector<Attribute> tspAttrs = getApiServiceProvider().tsp.getSignerTspAttributes(signer);
+            Date tspDate = null;
+
+            for (Attribute attr : tspAttrs) {
+                if (attr.getAttrValues().size() != 1) {
+                    throw new Exception("Too many TSP tokens");
+                }
+
+                CMSSignedData tspCms = new CMSSignedData(attr.getAttrValues().getObjectAt(0).getDERObject().getEncoded());
+                TimeStampTokenInfo tspi = getApiServiceProvider().tsp.verifyTSP(tspCms);
+
+                tspDate = tspi.getGenTime();
+            }
+
             boolean certCheck = false;
             List<String> certSerialNumbers = new ArrayList<>();
 
             while (certIt.hasNext()) {
                 certCheck = true;
                 X509Certificate cert = (X509Certificate) certIt.next();
-                cert.checkValidity();
+
+                try {
+                    if (tspDate != null) {
+                        cert.checkValidity(tspDate);
+                    } else {
+                        cert.checkValidity();
+                    }
+
+                    // TODO: ключ valid нужно добавлять рядом с информацией о сертификате, но пока не знаю как
+                    resp.put("valid", "valid");
+                } catch (CertificateExpiredException e) {
+                    resp.put("valid", "certificate_expired");
+                } catch (CertificateNotYetValidException e) {
+                    resp.put("valid", "certificate_not_yet_valid");
+                }
                 certs.add(cert);
                 certsSignValid.add(signer.verify(cert.getPublicKey(), providerName));
                 certSerialNumbers.add(String.valueOf(cert.getSerialNumber()));
@@ -183,7 +211,8 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
             }
 
             // Tsp verification
-            Vector<Attribute> tspAttrs = getApiServiceProvider().tsp.getSignerTspAttributes(signer);
+            //Vector<Attribute>
+            tspAttrs = getApiServiceProvider().tsp.getSignerTspAttributes(signer);
 
             for (Attribute attr : tspAttrs) {
                 if (attr.getAttrValues().size() != 1) {
