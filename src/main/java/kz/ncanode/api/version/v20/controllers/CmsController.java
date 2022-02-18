@@ -105,6 +105,8 @@ public class CmsController extends kz.ncanode.api.core.ApiController {
                 if (!getApiServiceProvider().tsp.signerHasTsp(signer)) {
                     // пропускаем добавление tsp к подписи, если эта подпись уже была во входящем файле
                     signers.add(getApiServiceProvider().tsp.addTspToSigner(signer, cert, useTsaPolicy));
+                } else {
+                    signers.add(signer);
                 }
             }
 
